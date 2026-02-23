@@ -20,6 +20,11 @@ import time
 import urllib.parse
 
 import aiohttp
+import bs4
+import requests
+from urllib.parse import urlparse
+from x_client_transaction import ClientTransaction
+from x_client_transaction.utils import generate_headers as generate_x_headers, get_ondemand_file_url
 
 # ── Configuration loader ──────────────────────────────────────────────────────
 
@@ -55,7 +60,7 @@ def load_config(path: str | None = None) -> dict:
 
 
 def make_headers(cfg: dict) -> dict:
-    """Build request headers from the loaded config."""
+    """Build request headers from the loaded config (without x-client-transaction-id)."""
     return {
         "accept": "*/*",
         "accept-language": "en-GB,en;q=0.5",
@@ -79,6 +84,24 @@ def make_headers(cfg: dict) -> dict:
     }
 
 
+def init_transaction_generator() -> ClientTransaction:
+    """Fetch x.com home page and ondemand.s JS to initialise the transaction ID generator."""
+    print("🔑 Initialising x-client-transaction-id generator …")
+    s = requests.Session()
+    s.headers.update(generate_x_headers())
+
+    home = s.get("https://x.com")
+    home_page = bs4.BeautifulSoup(home.content, "html.parser")
+
+    ondemand_url = get_ondemand_file_url(response=home_page)
+    ondemand = s.get(ondemand_url)
+    ondemand_response = ondemand.text
+
+    ct = ClientTransaction(home_page_response=home_page, ondemand_file_response=ondemand_response)
+    print("   ✅ Transaction ID generator ready.\n")
+    return ct
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -88,7 +111,7 @@ def build_url(cfg: dict, user_id: str, tweets_per_page: int, cursor: str | None 
         "userId": user_id,
         "count": tweets_per_page,
         "includePromotedContent": True,
-        "withQuickPromoteEligibilityTweetFields": True,
+        "withCommunity": True,
         "withVoice": True,
     }
     if cursor:
@@ -186,6 +209,10 @@ async def main():
     cookies = cfg["cookies"]
     headers = make_headers(cfg)
 
+    # Initialise the transaction ID generator (fetches x.com home + JS)
+    ct = init_transaction_generator()
+    api_path = urlparse(cfg["base_url"]).path  # e.g. /i/api/graphql/.../UserTweetsAndReplies
+
     all_texts: list[str] = []
     cursor: str | None = None
     page = 0
@@ -219,12 +246,17 @@ async def main():
 
             page += 1
             url = build_url(cfg, user_id, tweets_per_page, cursor)
+
+            # Generate a fresh transaction ID for each request
+            tid = ct.generate_transaction_id(method="GET", path=api_path)
+
             print(
                 f"  Page {page}: requesting {tweets_per_page} tweets "
                 f"(collected so far: {len(all_texts)}) …"
             )
 
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            req_headers = {"x-client-transaction-id": tid}
+            async with session.get(url, headers=req_headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status == 429:
                     # Use x-rate-limit-reset to calculate exact wait time
                     reset_ts = resp.headers.get("x-rate-limit-reset")
