@@ -64,6 +64,7 @@
     "guest_id_marketing": "YOUR_GUEST_ID_MARKETING",
     "guest_id_ads": "YOUR_GUEST_ID_ADS",
     "personalization_id": "YOUR_PERSONALIZATION_ID",
-    "lang": "en"
+    "lang": "en",
+    "d_prefs": "YOUR_D_PREFS_COOKIE"
   }
 }
