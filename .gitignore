@@ -1,0 +1,8 @@
+# Sensitive config (contains auth tokens)
+config.json
+
+# Python
+__pycache__/
+
+# Output data
+tweets*.json
